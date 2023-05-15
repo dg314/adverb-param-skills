@@ -1,10 +1,14 @@
-from typing import Tuple, Union
+from typing import List, Tuple, Union
+
+from constants import ADVERB_EMBEDDING_SIZE, INPUT_SIZE
+from preprocess import get_train_val_data
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 
 class SmallNet(nn.Module):
     def __init__(self, input_size, output_size):
@@ -34,18 +38,6 @@ def np_array_to_tensor(arr: np.ndarray) -> torch.Tensor:
 
 def tensor_to_np_array(tensor: torch.Tensor) -> np.ndarray:
     return tensor.detach().numpy()
-    
-def train_val_split(X: np.ndarray, Y: np.ndarray, train_proportion: float = 0.7) -> Tuple[Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray]]:
-    assert train_proportion >= 0 and train_proportion <= 1, "Invalid train proportion."
-    assert len(X) == len(Y), "X and Y must have the same number of examples."
-
-    num_examples = len(X)
-    test_start_index = int(num_examples * train_proportion)
-
-    X_train, X_val = X[:test_start_index], X[test_start_index:]
-    Y_train, Y_val = Y[:test_start_index], Y[test_start_index:]
-
-    return (X_train, X_val), (Y_train, Y_val)
     
 def get_val_loss(net: Union[Net, SmallNet], X_val: np.ndarray, Y_val: np.ndarray, loss_func: nn.Module) -> np.ndarray:
     predictions = net.forward(np_array_to_tensor(X_val))
@@ -89,3 +81,80 @@ def freeze_layer1(net: Net):
     for name, param in net.named_parameters():
         if "layer1" in name:
             param.requires_grad = False
+
+def learn_net_adverb_skill_groundings(skill1_experiment_results: List[List[float]], skill2_experiment_results: List[List[float]], skill1_name: str, skill2_name: str):
+    (X_train, X_val), (Y_train, Y_val) = get_train_val_data(skill1_experiment_results, skill2_experiment_results)
+
+    loss_func = nn.MSELoss()
+
+    skill1_net = Net(ADVERB_EMBEDDING_SIZE + INPUT_SIZE, 10, INPUT_SIZE)
+    skill1_optimizer = optim.SGD(skill1_net.parameters(), lr=0.03)
+
+    _, skill1_epoch_val_losses = train_net(skill1_net, X_train, Y_train, X_val, Y_val, skill1_optimizer, loss_func)
+
+    skill2_random_layer1_net = Net(ADVERB_EMBEDDING_SIZE + INPUT_SIZE, 10, INPUT_SIZE)
+    freeze_layer1(skill2_random_layer1_net)
+
+    skill2_random_layer1_optimizer = optim.SGD(skill2_random_layer1_net.parameters(), lr=0.03)
+
+    _, skill2_random_layer1_epoch_val_losses = train_net(skill2_random_layer1_net, X_train, Y_train, X_val, Y_val, skill2_random_layer1_optimizer, loss_func)
+
+    skill2_single_layer_net = SmallNet(ADVERB_EMBEDDING_SIZE + INPUT_SIZE, INPUT_SIZE)
+
+    skill2_single_layer_optimizer = optim.SGD(skill2_single_layer_net.parameters(), lr=0.03)
+
+    _, skill2_single_layer_epoch_val_losses = train_net(skill2_single_layer_net, X_train, Y_train, X_val, Y_val, skill2_single_layer_optimizer, loss_func)
+
+    skill2_transfer_net = Net(ADVERB_EMBEDDING_SIZE + INPUT_SIZE, 10, INPUT_SIZE)
+    transfer_layer1(skill1_net, skill2_transfer_net)
+    freeze_layer1(skill2_transfer_net)
+
+    skill2_transfer_optimizer = optim.SGD(skill2_transfer_net.parameters(), lr=0.03)
+
+    _, skill2_transfer_epoch_val_losses = train_net(skill2_transfer_net, X_train, Y_train, X_val, Y_val, skill2_transfer_optimizer, loss_func)
+
+    skill1_snake_case = skill1_name.replace(" ", "_").lower()
+    skill2_snake_case = skill2_name.replace(" ", "_").lower()
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(skill1_epoch_val_losses, label=f"{skill1_name} Validation Loss")
+    plt.plot(skill2_random_layer1_epoch_val_losses, label=f"{skill2_name} Validation Loss w/ Randomized Layer 1")
+    plt.plot(skill2_single_layer_epoch_val_losses, label=f"{skill2_name} Validation Loss w/ Single Layer")
+    plt.plot(skill2_transfer_epoch_val_losses, label=f"{skill2_name} Validation Loss w/ Transfer")
+    plt.legend()
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title(f"Adverb Skill Grounding w/ 100 Experiment Trials ({skill1_name} -> {skill2_name})")
+    plt.savefig(f"adverb_generalization_{skill1_snake_case}_to_{skill2_snake_case}_100_trials")
+    plt.show()
+
+    skill2_no_transfer_final_epoch_val_losses = []
+    skill2_transfer_final_epoch_val_losses = []
+    shots_list = np.arange(5, len(X_train), 5)
+
+    for shots in shots_list:
+        X_train_subset = X_train[:shots]
+        Y_train_subset = Y_train[:shots]
+        
+        skill2_no_transfer_net = Net(ADVERB_EMBEDDING_SIZE + INPUT_SIZE, 10, INPUT_SIZE)
+        skill2_no_transfer_optimizer = optim.SGD(skill2_no_transfer_net.parameters(), lr=0.03)
+
+        _, skill2_no_transfer_epoch_val_losses = train_net(skill2_no_transfer_net, X_train_subset, Y_train_subset, X_val, Y_val, skill2_no_transfer_optimizer, loss_func, num_epochs=10)
+        skill2_no_transfer_final_epoch_val_losses.append(skill2_no_transfer_epoch_val_losses[-1])
+
+        skill2_transfer_net = Net(ADVERB_EMBEDDING_SIZE + INPUT_SIZE, 10, INPUT_SIZE)
+        transfer_layer1(skill1_net, skill2_transfer_net)
+
+        skill2_transfer_optimizer = optim.SGD(skill2_transfer_net.parameters(), lr=0.03)
+
+        _, skill2_transfer_epoch_val_losses = train_net(skill2_transfer_net, X_train_subset, Y_train_subset, X_val, Y_val, skill2_transfer_optimizer, loss_func, num_epochs=10)
+        skill2_transfer_final_epoch_val_losses.append(skill2_transfer_epoch_val_losses[-1])
+
+    plt.plot(shots_list, skill2_no_transfer_final_epoch_val_losses, label=f"{skill2_name} Final Validation Loss w/o Transfer")
+    plt.plot(shots_list, skill2_transfer_final_epoch_val_losses, label=f"{skill2_name} Final Validation Loss w/ Transfer")
+    plt.legend()
+    plt.xlabel(f"Shots on {skill2_name} Environment")
+    plt.ylabel("Loss")
+    plt.title(f"Few-Shot Learning of Adverb Skill Grounding ({skill1_name} -> {skill2_name})")
+    plt.savefig(f"adverb_generalization_{skill1_snake_case}_to_{skill2_snake_case}_few_shots")
+    plt.show() 

@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Tuple, Callable
 
 import gensim.downloader
 from gensim.models import KeyedVectors
@@ -10,7 +10,7 @@ def download_keyed_vectors() -> KeyedVectors:
 
     return keyed_vectors
 
-def create_continuum_predictor(keyed_vectors: KeyedVectors, words_and_values: List[Tuple[str, float]]):
+def create_continuum_predictor(keyed_vectors: KeyedVectors, words_and_values: List[Tuple[str, float]]) -> Callable[[str], float]:
     words, values = list(zip(*words_and_values))
     vectors = np.array([keyed_vectors.get_vector(word) for word in words])
 
@@ -23,7 +23,7 @@ def create_continuum_predictor(keyed_vectors: KeyedVectors, words_and_values: Li
     
     return continuum_predictor
 
-def create_word_to_magnitude_predictor(keyed_vectors: KeyedVectors) -> float:
+def create_word_to_magnitude_predictor(keyed_vectors: KeyedVectors) -> Callable[[str], float]:
     words_and_values = [
         ("unnoticeably", 0.1),
         ("insignificantly", 0.2),
@@ -39,7 +39,7 @@ def create_word_to_magnitude_predictor(keyed_vectors: KeyedVectors) -> float:
     ]
     return create_continuum_predictor(keyed_vectors, words_and_values)
 
-def create_word_to_slower_faster_predictor(keyed_vectors: KeyedVectors) -> float:
+def create_word_to_slower_faster_predictor(keyed_vectors: KeyedVectors) -> Callable[[str], float]:
     words_and_values = [
         ("slower", -1),
         ("gentler", -0.7),
@@ -50,7 +50,7 @@ def create_word_to_slower_faster_predictor(keyed_vectors: KeyedVectors) -> float
     ]
     return create_continuum_predictor(keyed_vectors, words_and_values)
 
-def create_word_to_lower_higher_predictor(keyed_vectors: KeyedVectors) -> float:
+def create_word_to_lower_higher_predictor(keyed_vectors: KeyedVectors) -> Callable[[str], float]:
     words_and_values = [
         ("lower", -1),
         ("beneath", -1),
@@ -61,7 +61,7 @@ def create_word_to_lower_higher_predictor(keyed_vectors: KeyedVectors) -> float:
     ]
     return create_continuum_predictor(keyed_vectors, words_and_values)
 
-def create_word_to_closer_farther_predictor(keyed_vectors: KeyedVectors) -> float:
+def create_word_to_closer_farther_predictor(keyed_vectors: KeyedVectors) -> Callable[[str], float]:
     words_and_values = [
         ("closer", -1),
         ("nearer", -1),
